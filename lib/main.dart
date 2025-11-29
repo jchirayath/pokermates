@@ -1,10 +1,15 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:sizer/sizer.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../core/app_export.dart';
 import '../widgets/custom_error_widget.dart';
+import './routes/app_routes.dart';
+import './services/profile_service.dart';
 import './services/supabase_service.dart';
+import './theme/app_theme.dart';
+import './widgets/custom_error_widget.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -41,7 +46,54 @@ void main() async {
   });
 }
 
-class MyApp extends StatelessWidget {
+class MyApp extends StatefulWidget {
+  const MyApp({super.key});
+
+  @override
+  State<MyApp> createState() => _MyAppState();
+}
+
+class _MyAppState extends State<MyApp> {
+  final SupabaseService _supabaseService = SupabaseService.instance;
+  final ProfileService _profileService = ProfileService();
+
+  @override
+  void initState() {
+    super.initState();
+    _setupAuthListener();
+  }
+
+  void _setupAuthListener() {
+    _supabaseService.client.auth.onAuthStateChange.listen((data) async {
+      final event = data.event;
+      final session = data.session;
+
+      if (event == AuthChangeEvent.signedIn && session?.user != null) {
+        // Ensure user profile exists when signing in
+        await _ensureUserProfileExists(session!.user.id, session.user.email);
+      }
+    });
+  }
+
+  Future<void> _ensureUserProfileExists(String userId, String? email) async {
+    try {
+      final profile = await _profileService.getUserProfile(userId);
+
+      if (profile == null) {
+        debugPrint('Creating profile for new user: $userId');
+        final defaultName = email?.split('@')[0] ?? 'User';
+        await _profileService.createProfile(
+          userId: userId,
+          fullName: defaultName,
+          username: defaultName.replaceAll(RegExp(r'[^a-zA-Z0-9_]'), '_'),
+        );
+        debugPrint('Profile created successfully');
+      }
+    } catch (e) {
+      debugPrint('Error ensuring profile exists: $e');
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Sizer(

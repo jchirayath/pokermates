@@ -29,26 +29,38 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
   Future<void> _loadProfile() async {
     try {
-      setState(() => _isLoading = true);
+      setState(() {
+        _isLoading = true;
+        _error = null;
+      });
 
       // Get current user
       final currentUser = _supabaseService.client.auth.currentUser;
 
-      // Create profile if it doesn't exist
+      if (currentUser == null) {
+        setState(() {
+          _error = 'User not authenticated';
+          _isLoading = false;
+        });
+        return;
+      }
+
+      // Try to fetch existing profile
       final profile = await _profileService.getCurrentUserProfile();
 
       if (profile == null) {
-        if (currentUser != null) {
-          final newProfile = await _profileService.createProfile(
-            userId: currentUser.id,
-            fullName: currentUser.email?.split('@')[0] ?? 'User',
-            username: currentUser.email?.split('@')[0],
-          );
-          setState(() {
-            _profile = newProfile;
-            _isLoading = false;
-          });
-        }
+        // Create profile if it doesn't exist
+        final defaultName = currentUser.email?.split('@')[0] ?? 'User';
+        final newProfile = await _profileService.createProfile(
+          userId: currentUser.id,
+          fullName: defaultName,
+          username: defaultName.replaceAll(RegExp(r'[^a-zA-Z0-9_]'), '_'),
+        );
+
+        setState(() {
+          _profile = newProfile;
+          _isLoading = false;
+        });
       } else {
         setState(() {
           _profile = profile;
@@ -56,8 +68,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
         });
       }
     } catch (e) {
+      debugPrint('Error loading profile: $e');
       setState(() {
-        _error = 'Failed to load profile';
+        _error = 'Failed to load profile: ${e.toString()}';
         _isLoading = false;
       });
     }

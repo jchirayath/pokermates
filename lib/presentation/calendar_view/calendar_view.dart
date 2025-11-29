@@ -5,6 +5,7 @@ import '../../core/app_export.dart';
 import '../../widgets/custom_app_bar.dart';
 import '../../widgets/custom_bottom_bar.dart';
 import '../../widgets/custom_icon_widget.dart';
+import '../../services/poker_service.dart';
 import './widgets/calendar_widget.dart';
 import './widgets/filter_controls_widget.dart';
 import './widgets/game_detail_bottom_sheet.dart';
@@ -25,94 +26,24 @@ class _CalendarViewState extends State<CalendarView> {
   String? _selectedGameType;
   final TextEditingController _searchController = TextEditingController();
 
-  // Mock data for games
-  final List<Map<String, dynamic>> _allGames = [
-    {
-      'id': 1,
-      'title': 'Friday Night Poker',
-      'date': DateTime.now().add(const Duration(days: 2, hours: 19)),
-      'location': 'Mike\'s Place, 123 Oak Street',
-      'host': 'Mike Johnson',
-      'confirmedPlayers': 8,
-      'isRSVPed': true,
-      'group': 'Downtown Crew',
-      'type': 'Texas Hold\'em',
-      'description':
-          'Weekly Friday night game with \$50 buy-in. Bring your A-game!',
-    },
-    {
-      'id': 2,
-      'title': 'Weekend Tournament',
-      'date': DateTime.now().add(const Duration(days: 5, hours: 14)),
-      'location': 'Community Center, 456 Maple Ave',
-      'host': 'Sarah Williams',
-      'confirmedPlayers': 12,
-      'isRSVPed': false,
-      'group': 'Weekend Warriors',
-      'type': 'Tournament',
-      'description':
-          'Monthly tournament with \$100 buy-in and guaranteed prize pool.',
-    },
-    {
-      'id': 3,
-      'title': 'Casual Home Game',
-      'date': DateTime.now().add(const Duration(days: 7, hours: 18)),
-      'location': 'Tom\'s House, 789 Pine Road',
-      'host': 'Tom Anderson',
-      'confirmedPlayers': 6,
-      'isRSVPed': true,
-      'group': 'Downtown Crew',
-      'type': 'Cash Game',
-      'description':
-          'Friendly cash game, \$20 buy-in. Pizza and drinks provided!',
-    },
-    {
-      'id': 4,
-      'title': 'High Stakes Night',
-      'date': DateTime.now().add(const Duration(days: 10, hours: 20)),
-      'location': 'Private Club, 321 Cedar Lane',
-      'host': 'David Chen',
-      'confirmedPlayers': 10,
-      'isRSVPed': false,
-      'group': 'High Rollers',
-      'type': 'Texas Hold\'em',
-      'description':
-          'High stakes game for experienced players. \$500 minimum buy-in.',
-    },
-    {
-      'id': 5,
-      'title': 'Monthly Championship',
-      'date': DateTime.now().add(const Duration(days: 15, hours: 15)),
-      'location': 'Grand Hotel, 555 Main Street',
-      'host': 'Lisa Martinez',
-      'confirmedPlayers': 20,
-      'isRSVPed': true,
-      'group': 'Weekend Warriors',
-      'type': 'Tournament',
-      'description':
-          'Monthly championship series. \$200 buy-in with rebuys allowed.',
-    },
-  ];
-
-  final List<String> _availableGroups = [
-    'Downtown Crew',
-    'Weekend Warriors',
-    'High Rollers',
-  ];
-
-  final List<String> _availableGameTypes = [
-    'Texas Hold\'em',
-    'Tournament',
-    'Cash Game',
-  ];
-
+  bool _isLoading = true;
+  List<Map<String, dynamic>> _allGames = [];
+  List<String> _availableGroups = [];
   Map<DateTime, List<Map<String, dynamic>>> _gamesByDate = {};
   List<Map<String, dynamic>> _filteredGames = [];
+  String? _error;
+
+  final List<String> _availableGameTypes = [
+    'scheduled',
+    'in_progress',
+    'completed',
+    'cancelled',
+  ];
 
   @override
   void initState() {
     super.initState();
-    _initializeGames();
+    _loadGames();
   }
 
   @override
@@ -121,15 +52,33 @@ class _CalendarViewState extends State<CalendarView> {
     super.dispose();
   }
 
-  void _initializeGames() {
-    _filteredGames = List.from(_allGames);
-    _organizeGamesByDate();
+  Future<void> _loadGames() async {
+    try {
+      setState(() => _isLoading = true);
+
+      final games = await PokerService.fetchAllUserGames();
+
+      setState(() {
+        _allGames = games;
+        _filterGames();
+        _isLoading = false;
+        _error = null;
+      });
+    } catch (e) {
+      debugPrint('Error loading games: $e');
+      setState(() {
+        _error = e.toString();
+        _isLoading = false;
+        _allGames = []; // Ensure empty list on error
+        _filteredGames = [];
+      });
+    }
   }
 
   void _organizeGamesByDate() {
     _gamesByDate = {};
     for (var game in _filteredGames) {
-      final date = game['date'] as DateTime;
+      final date = DateTime.parse(game['scheduled_at'] as String);
       final normalizedDate = DateTime(date.year, date.month, date.day);
 
       if (_gamesByDate[normalizedDate] == null) {
@@ -139,26 +88,32 @@ class _CalendarViewState extends State<CalendarView> {
     }
   }
 
-  void _applyFilters() {
+  void _filterGames() {
     setState(() {
-      _filteredGames = _allGames.where((game) {
-        bool matchesGroup =
-            _selectedGroup == null || game['group'] == _selectedGroup;
-        bool matchesType =
-            _selectedGameType == null || game['type'] == _selectedGameType;
-        bool matchesSearch = _searchController.text.isEmpty ||
-            (game['title'] as String)
-                .toLowerCase()
-                .contains(_searchController.text.toLowerCase()) ||
-            (game['location'] as String)
-                .toLowerCase()
-                .contains(_searchController.text.toLowerCase()) ||
-            (game['host'] as String)
-                .toLowerCase()
-                .contains(_searchController.text.toLowerCase());
+      _filteredGames =
+          _allGames.where((game) {
+            final groupName = game['poker_groups']?['name'] as String? ?? '';
+            final status = game['status'] as String? ?? '';
+            final hostName =
+                game['user_profiles']?['full_name'] as String? ?? '';
+            final locationName =
+                game['saved_locations']?['name'] as String? ?? '';
 
-        return matchesGroup && matchesType && matchesSearch;
-      }).toList();
+            bool matchesGroup =
+                _selectedGroup == null || groupName == _selectedGroup;
+            bool matchesType =
+                _selectedGameType == null || status == _selectedGameType;
+            bool matchesSearch =
+                _searchController.text.isEmpty ||
+                locationName.toLowerCase().contains(
+                  _searchController.text.toLowerCase(),
+                ) ||
+                hostName.toLowerCase().contains(
+                  _searchController.text.toLowerCase(),
+                );
+
+            return matchesGroup && matchesType && matchesSearch;
+          }).toList();
 
       _organizeGamesByDate();
     });
@@ -169,7 +124,7 @@ class _CalendarViewState extends State<CalendarView> {
       _selectedGroup = null;
       _selectedGameType = null;
       _searchController.clear();
-      _applyFilters();
+      _filterGames();
     });
   }
 
@@ -179,8 +134,11 @@ class _CalendarViewState extends State<CalendarView> {
       _focusedDay = focusedDay;
     });
 
-    final normalizedDay =
-        DateTime(selectedDay.year, selectedDay.month, selectedDay.day);
+    final normalizedDay = DateTime(
+      selectedDay.year,
+      selectedDay.month,
+      selectedDay.day,
+    );
     final gamesOnDay = _gamesByDate[normalizedDay];
 
     if (gamesOnDay != null && gamesOnDay.isNotEmpty) {
@@ -193,45 +151,65 @@ class _CalendarViewState extends State<CalendarView> {
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
-      builder: (context) => GameDetailBottomSheet(
-        game: game,
-        onViewDetails: () {
-          Navigator.pop(context);
-          Navigator.pushNamed(context, '/game-detail', arguments: game);
-        },
-        onRSVP: () {
-          Navigator.pop(context);
-          _toggleRSVP(game);
-        },
-        onShare: () {
-          Navigator.pop(context);
-          _shareGame(game);
-        },
-        onSetReminder: () {
-          Navigator.pop(context);
-          _setReminder(game);
-        },
-      ),
+      builder:
+          (context) => GameDetailBottomSheet(
+            game: game,
+            onViewDetails: () {
+              Navigator.pop(context);
+              Navigator.pushNamed(context, '/game-detail', arguments: game);
+            },
+            onRSVP: () {
+              Navigator.pop(context);
+              _toggleRSVP(game);
+            },
+            onShare: () {
+              Navigator.pop(context);
+              _shareGame(game);
+            },
+            onSetReminder: () {
+              Navigator.pop(context);
+              _setReminder(game);
+            },
+          ),
     );
   }
 
-  void _toggleRSVP(Map<String, dynamic> game) {
-    setState(() {
-      final gameIndex = _allGames.indexWhere((g) => g['id'] == game['id']);
-      if (gameIndex != -1) {
-        _allGames[gameIndex]['isRSVPed'] =
-            !(game['isRSVPed'] as bool? ?? false);
-        _applyFilters();
-      }
-    });
+  Future<void> _toggleRSVP(Map<String, dynamic> game) async {
+    try {
+      final participants = game['game_participants'] as List<dynamic>? ?? [];
+      final currentConfirmed =
+          participants.isNotEmpty
+              ? (participants.first['is_confirmed'] as bool? ?? false)
+              : false;
 
-    final isRSVPed = game['isRSVPed'] as bool? ?? false;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(isRSVPed ? 'RSVP cancelled' : 'RSVP confirmed'),
-        duration: const Duration(seconds: 2),
-      ),
-    );
+      await PokerService.toggleGameRSVP(
+        gameId: game['id'] as String,
+        isConfirmed: !currentConfirmed,
+      );
+
+      await _loadGames();
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              currentConfirmed ? 'RSVP cancelled' : 'RSVP confirmed',
+            ),
+            duration: const Duration(seconds: 2),
+            behavior: SnackBarBehavior.floating,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(8),
+            ),
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Error updating RSVP: $e')));
+      }
+    }
   }
 
   void _shareGame(Map<String, dynamic> game) {
@@ -276,13 +254,13 @@ class _CalendarViewState extends State<CalendarView> {
                 size: 24,
               ),
             ),
-            onChanged: (_) => _applyFilters(),
+            onChanged: (_) => _filterGames(),
           ),
           actions: [
             TextButton(
               onPressed: () {
                 _searchController.clear();
-                _applyFilters();
+                _filterGames();
                 Navigator.pop(context);
               },
               child: const Text('Clear'),
@@ -300,11 +278,16 @@ class _CalendarViewState extends State<CalendarView> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final upcomingGames = _filteredGames
-        .where((game) => (game['date'] as DateTime).isAfter(DateTime.now()))
-        .toList()
-      ..sort(
-          (a, b) => (a['date'] as DateTime).compareTo(b['date'] as DateTime));
+    final upcomingGames =
+        _filteredGames.where((game) {
+            final scheduledAt = DateTime.parse(game['scheduled_at'] as String);
+            return scheduledAt.isAfter(DateTime.now());
+          }).toList()
+          ..sort(
+            (a, b) => DateTime.parse(
+              a['scheduled_at'] as String,
+            ).compareTo(DateTime.parse(b['scheduled_at'] as String)),
+          );
     final nextFiveGames = upcomingGames.take(5).toList();
 
     return Scaffold(
@@ -324,55 +307,59 @@ class _CalendarViewState extends State<CalendarView> {
           ),
         ],
       ),
-      body: SingleChildScrollView(
-        child: Column(
-          children: [
-            FilterControlsWidget(
-              selectedGroup: _selectedGroup,
-              selectedGameType: _selectedGameType,
-              availableGroups: _availableGroups,
-              availableGameTypes: _availableGameTypes,
-              onGroupChanged: (value) {
-                setState(() {
-                  _selectedGroup = value;
-                  _applyFilters();
-                });
-              },
-              onGameTypeChanged: (value) {
-                setState(() {
-                  _selectedGameType = value;
-                  _applyFilters();
-                });
-              },
-              onClearFilters: _clearFilters,
-            ),
-            CalendarWidget(
-              focusedDay: _focusedDay,
-              selectedDay: _selectedDay,
-              gamesByDate: _gamesByDate,
-              onDaySelected: _onDaySelected,
-              onPageChanged: (focusedDay) {
-                setState(() {
-                  _focusedDay = focusedDay;
-                });
-              },
-            ),
-            SizedBox(height: 2.h),
-            UpcomingGamesListWidget(
-              upcomingGames: nextFiveGames,
-              onGameTap: (game) => Navigator.pushNamed(
-                context,
-                '/game-detail',
-                arguments: game,
+      body:
+          _isLoading
+              ? const Center(child: CircularProgressIndicator())
+              : SingleChildScrollView(
+                child: Column(
+                  children: [
+                    FilterControlsWidget(
+                      selectedGroup: _selectedGroup,
+                      selectedGameType: _selectedGameType,
+                      availableGroups: _availableGroups,
+                      availableGameTypes: _availableGameTypes,
+                      onGroupChanged: (value) {
+                        setState(() {
+                          _selectedGroup = value;
+                          _filterGames();
+                        });
+                      },
+                      onGameTypeChanged: (value) {
+                        setState(() {
+                          _selectedGameType = value;
+                          _filterGames();
+                        });
+                      },
+                      onClearFilters: _clearFilters,
+                    ),
+                    CalendarWidget(
+                      focusedDay: _focusedDay,
+                      selectedDay: _selectedDay,
+                      gamesByDate: _gamesByDate,
+                      onDaySelected: _onDaySelected,
+                      onPageChanged: (focusedDay) {
+                        setState(() {
+                          _focusedDay = focusedDay;
+                        });
+                      },
+                    ),
+                    SizedBox(height: 2.h),
+                    UpcomingGamesListWidget(
+                      upcomingGames: nextFiveGames,
+                      onGameTap:
+                          (game) => Navigator.pushNamed(
+                            context,
+                            '/game-detail',
+                            arguments: game,
+                          ),
+                      onRSVPToggle: _toggleRSVP,
+                      onShareGame: _shareGame,
+                      onSetReminder: _setReminder,
+                    ),
+                    SizedBox(height: 2.h),
+                  ],
+                ),
               ),
-              onRSVPToggle: _toggleRSVP,
-              onShareGame: _shareGame,
-              onSetReminder: _setReminder,
-            ),
-            SizedBox(height: 2.h),
-          ],
-        ),
-      ),
       floatingActionButton: FloatingActionButton.extended(
         onPressed: () => Navigator.pushNamed(context, '/create-game'),
         icon: CustomIconWidget(
