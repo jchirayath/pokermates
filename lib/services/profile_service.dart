@@ -1,4 +1,5 @@
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:flutter/foundation.dart';
 import './supabase_service.dart';
 
 class ProfileService {
@@ -7,15 +8,16 @@ class ProfileService {
   // Get user profile by ID
   Future<Map<String, dynamic>?> getUserProfile(String userId) async {
     try {
-      final response = await _client
-          .from('user_profiles')
-          .select()
-          .eq('id', userId)
-          .maybeSingle();
+      final response =
+          await _client
+              .from('user_profiles')
+              .select()
+              .eq('id', userId)
+              .maybeSingle();
 
       return response;
     } catch (e) {
-      print('Error fetching user profile: $e');
+      debugPrint('Error fetching user profile: $e');
       return null;
     }
   }
@@ -24,11 +26,14 @@ class ProfileService {
   Future<Map<String, dynamic>?> getCurrentUserProfile() async {
     try {
       final currentUser = _client.auth.currentUser;
-      if (currentUser == null) return null;
+      if (currentUser == null) {
+        debugPrint('No authenticated user found');
+        return null;
+      }
 
       return await getUserProfile(currentUser.id);
     } catch (e) {
-      print('Error fetching current user profile: $e');
+      debugPrint('Error fetching current user profile: $e');
       return null;
     }
   }
@@ -118,12 +123,13 @@ class ProfileService {
 
       if (data.isEmpty) return null;
 
-      final response = await _client
-          .from('user_profiles')
-          .update(data)
-          .eq('id', userId)
-          .select()
-          .single();
+      final response =
+          await _client
+              .from('user_profiles')
+              .update(data)
+              .eq('id', userId)
+              .select()
+              .single();
 
       return response;
     } catch (e) {
@@ -150,8 +156,10 @@ class ProfileService {
     String? excludeUserId,
   }) async {
     try {
-      var query =
-          _client.from('user_profiles').select('id').eq('username', username);
+      var query = _client
+          .from('user_profiles')
+          .select('id')
+          .eq('username', username);
 
       if (excludeUserId != null) {
         query = query.neq('id', excludeUserId);

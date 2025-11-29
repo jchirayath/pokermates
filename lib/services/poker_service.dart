@@ -5,9 +5,29 @@ import 'package:flutter/foundation.dart';
 class PokerService {
   static final SupabaseService _supabase = SupabaseService.instance;
 
+  // Utility method to get current user ID with better null handling
+  static String? _getCurrentUserIdSafe() {
+    return _supabase.client.auth.currentUser?.id;
+  }
+
+  // Utility method to get current user ID
+  static String getCurrentUserId() {
+    final userId = _getCurrentUserIdSafe();
+    if (userId == null) {
+      throw Exception('User not authenticated');
+    }
+    return userId;
+  }
+
   // Groups Operations
   static Future<List<Map<String, dynamic>>> fetchUserGroups() async {
     try {
+      final userId = _getCurrentUserIdSafe();
+      if (userId == null) {
+        debugPrint('User not authenticated, returning empty groups list');
+        return [];
+      }
+
       final response = await _supabase.client
           .from('poker_groups')
           .select('''
@@ -15,32 +35,33 @@ class PokerService {
             group_members!inner(user_id, role),
             poker_games(id, scheduled_at, status)
           ''')
-          .eq('group_members.user_id', _supabase.client.auth.currentUser!.id)
+          .eq('group_members.user_id', userId)
           .order('created_at', ascending: false);
 
       return List<Map<String, dynamic>>.from(response);
     } catch (e) {
       debugPrint('Error fetching groups: $e');
-      rethrow;
+      return [];
     }
   }
 
-  static Future<Map<String, dynamic>> createGroup({
+  static Future<Map<String, dynamic>?> createGroup({
     required String name,
     String? description,
   }) async {
     try {
-      final userId = _supabase.client.auth.currentUser!.id;
+      final userId = getCurrentUserId();
 
-      final groupResponse = await _supabase.client
-          .from('poker_groups')
-          .insert({
-            'name': name,
-            'description': description,
-            'creator_id': userId,
-          })
-          .select()
-          .single();
+      final groupResponse =
+          await _supabase.client
+              .from('poker_groups')
+              .insert({
+                'name': name,
+                'description': description,
+                'creator_id': userId,
+              })
+              .select()
+              .single();
 
       // Add creator as admin member
       await _supabase.client.from('group_members').insert({
@@ -52,7 +73,7 @@ class PokerService {
       return groupResponse;
     } catch (e) {
       debugPrint('Error creating group: $e');
-      rethrow;
+      return null;
     }
   }
 
@@ -67,19 +88,24 @@ class PokerService {
 
   // Games Operations
   static Future<List<Map<String, dynamic>>> fetchGroupGames(
-      String groupId) async {
+    String groupId,
+  ) async {
     try {
-      final response = await _supabase.client.from('poker_games').select('''
+      final response = await _supabase.client
+          .from('poker_games')
+          .select('''
             *,
             saved_locations(name, address),
             user_profiles!poker_games_host_id_fkey(full_name),
             game_participants(id, user_id)
-          ''').eq('group_id', groupId).order('scheduled_at', ascending: false);
+          ''')
+          .eq('group_id', groupId)
+          .order('scheduled_at', ascending: false);
 
       return List<Map<String, dynamic>>.from(response);
     } catch (e) {
       debugPrint('Error fetching games: $e');
-      rethrow;
+      return [];
     }
   }
 
@@ -95,31 +121,35 @@ class PokerService {
     String? notes,
   }) async {
     try {
-      final gameResponse = await _supabase.client
-          .from('poker_games')
-          .insert({
-            'group_id': groupId,
-            'location_id': locationId,
-            'host_id': hostId,
-            'scheduled_at': scheduledAt.toIso8601String(),
-            'buyin_amount': buyinAmount,
-            'allow_rebuys': allowRebuys,
-            'rebuy_amount': rebuyAmount,
-            'notes': notes,
-            'status': 'scheduled',
-          })
-          .select()
-          .single();
+      final gameResponse =
+          await _supabase.client
+              .from('poker_games')
+              .insert({
+                'group_id': groupId,
+                'location_id': locationId,
+                'host_id': hostId,
+                'scheduled_at': scheduledAt.toIso8601String(),
+                'buyin_amount': buyinAmount,
+                'allow_rebuys': allowRebuys,
+                'rebuy_amount': rebuyAmount,
+                'notes': notes,
+                'status': 'scheduled',
+              })
+              .select()
+              .single();
 
       // Add selected players as participants
       if (selectedPlayerIds != null && selectedPlayerIds.isNotEmpty) {
-        final participants = selectedPlayerIds
-            .map((playerId) => {
-                  'game_id': gameResponse['id'],
-                  'user_id': playerId,
-                  'total_buyin': buyinAmount,
-                })
-            .toList();
+        final participants =
+            selectedPlayerIds
+                .map(
+                  (playerId) => {
+                    'game_id': gameResponse['id'],
+                    'user_id': playerId,
+                    'total_buyin': buyinAmount,
+                  },
+                )
+                .toList();
 
         await _supabase.client.from('game_participants').insert(participants);
       }
@@ -144,7 +174,8 @@ class PokerService {
     try {
       await _supabase.client
           .from('poker_games')
-          .update({'status': status}).eq('id', gameId);
+          .update({'status': status})
+          .eq('id', gameId);
     } catch (e) {
       debugPrint('Error updating game status: $e');
       rethrow;
@@ -154,7 +185,11 @@ class PokerService {
   // Locations Operations
   static Future<List<Map<String, dynamic>>> fetchUserLocations() async {
     try {
-      final userId = _supabase.client.auth.currentUser!.id;
+      final userId = _getCurrentUserIdSafe();
+      if (userId == null) {
+        debugPrint('User not authenticated, returning empty locations list');
+        return [];
+      }
 
       final response = await _supabase.client
           .from('saved_locations')
@@ -165,11 +200,11 @@ class PokerService {
       return List<Map<String, dynamic>>.from(response);
     } catch (e) {
       debugPrint('Error fetching locations: $e');
-      rethrow;
+      return [];
     }
   }
 
-  static Future<Map<String, dynamic>> createLocation({
+  static Future<Map<String, dynamic>?> createLocation({
     required String name,
     required String address,
     String? city,
@@ -177,36 +212,42 @@ class PokerService {
     String? postalCode,
   }) async {
     try {
-      final userId = _supabase.client.auth.currentUser!.id;
+      final userId = getCurrentUserId();
 
-      final response = await _supabase.client
-          .from('saved_locations')
-          .insert({
-            'name': name,
-            'address': address,
-            'city': city,
-            'state': state,
-            'postal_code': postalCode,
-            'created_by': userId,
-          })
-          .select()
-          .single();
+      final response =
+          await _supabase.client
+              .from('saved_locations')
+              .insert({
+                'name': name,
+                'address': address,
+                'city': city,
+                'state': state,
+                'postal_code': postalCode,
+                'created_by': userId,
+              })
+              .select()
+              .single();
 
       return response;
     } catch (e) {
       debugPrint('Error creating location: $e');
-      rethrow;
+      return null;
     }
   }
 
   // Group Members Operations
   static Future<List<Map<String, dynamic>>> fetchGroupMembers(
-      String groupId) async {
+    String groupId,
+  ) async {
     try {
-      final response = await _supabase.client.from('group_members').select('''
+      final response = await _supabase.client
+          .from('group_members')
+          .select('''
             *,
             user_profiles(id, full_name, avatar_url)
-          ''').eq('group_id', groupId).order('joined_at', ascending: false);
+          ''')
+          .eq('group_id', groupId)
+          .order('joined_at', ascending: false);
 
       return List<Map<String, dynamic>>.from(response);
     } catch (e) {
@@ -243,13 +284,17 @@ class PokerService {
 
   // Game Participants Operations
   static Future<List<Map<String, dynamic>>> fetchGameParticipants(
-      String gameId) async {
+    String gameId,
+  ) async {
     try {
-      final response =
-          await _supabase.client.from('game_participants').select('''
+      final response = await _supabase.client
+          .from('game_participants')
+          .select('''
             *,
             user_profiles(full_name, avatar_url)
-          ''').eq('game_id', gameId).order('created_at', ascending: false);
+          ''')
+          .eq('game_id', gameId)
+          .order('created_at', ascending: false);
 
       return List<Map<String, dynamic>>.from(response);
     } catch (e) {
@@ -263,19 +308,20 @@ class PokerService {
     required double cashoutAmount,
   }) async {
     try {
-      final participant = await _supabase.client
-          .from('game_participants')
-          .select()
-          .eq('id', participantId)
-          .single();
+      final participant =
+          await _supabase.client
+              .from('game_participants')
+              .select()
+              .eq('id', participantId)
+              .single();
 
       final netProfit =
-          cashoutAmount - (participant['total_buyin'] as num).toDouble();
+          cashoutAmount - ((participant['total_buyin'] as num?)?.toDouble() ?? 0);
 
-      await _supabase.client.from('game_participants').update({
-        'cashout_amount': cashoutAmount,
-        'net_profit': netProfit,
-      }).eq('id', participantId);
+      await _supabase.client
+          .from('game_participants')
+          .update({'cashout_amount': cashoutAmount, 'net_profit': netProfit})
+          .eq('id', participantId);
     } catch (e) {
       debugPrint('Error updating participant results: $e');
       rethrow;
@@ -284,7 +330,8 @@ class PokerService {
 
   // Payments Operations
   static Future<List<Map<String, dynamic>>> fetchParticipantPayments(
-      String participantId) async {
+    String participantId,
+  ) async {
     try {
       final response = await _supabase.client
           .from('payment_transactions')
@@ -322,11 +369,14 @@ class PokerService {
   // Statistics Operations
   static Future<Map<String, dynamic>> fetchPlayerStats(String userId) async {
     try {
-      final participants =
-          await _supabase.client.from('game_participants').select('''
+      final participants = await _supabase.client
+          .from('game_participants')
+          .select('''
             *,
             poker_games!inner(status, scheduled_at)
-          ''').eq('user_id', userId).eq('poker_games.status', 'completed');
+          ''')
+          .eq('user_id', userId)
+          .eq('poker_games.status', 'completed');
 
       double totalBuyin = 0;
       double totalCashout = 0;
@@ -349,6 +399,52 @@ class PokerService {
       };
     } catch (e) {
       debugPrint('Error fetching player stats: $e');
+      rethrow;
+    }
+  }
+
+  // Calendar View Operations
+  static Future<List<Map<String, dynamic>>> fetchAllUserGames() async {
+    try {
+      final userId = _getCurrentUserIdSafe();
+      if (userId == null) {
+        debugPrint('User not authenticated, returning empty games list');
+        return [];
+      }
+
+      final response = await _supabase.client
+          .from('poker_games')
+          .select('''
+            *,
+            saved_locations(name, address, city, state),
+            user_profiles!poker_games_host_id_fkey(full_name),
+            poker_groups(name),
+            game_participants!inner(user_id, is_confirmed)
+          ''')
+          .eq('game_participants.user_id', userId)
+          .order('scheduled_at', ascending: true);
+
+      return List<Map<String, dynamic>>.from(response);
+    } catch (e) {
+      debugPrint('Error fetching all user games: $e');
+      return [];
+    }
+  }
+
+  static Future<void> toggleGameRSVP({
+    required String gameId,
+    required bool isConfirmed,
+  }) async {
+    try {
+      final userId = _getCurrentUserIdSafe();
+
+      await _supabase.client
+          .from('game_participants')
+          .update({'is_confirmed': isConfirmed})
+          .eq('game_id', gameId)
+          .eq('user_id', userId ?? '');
+    } catch (e) {
+      debugPrint('Error toggling RSVP: $e');
       rethrow;
     }
   }

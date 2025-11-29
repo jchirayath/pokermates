@@ -24,7 +24,9 @@ class _GroupsDashboardState extends State<GroupsDashboard> {
   String _searchQuery = '';
   bool _isRefreshing = false;
   bool _isLoading = true;
-  List<Map<String, dynamic>> _allGroups = [];
+  List<Map<String, dynamic>> _groups = [];
+  String? _error;
+  bool _isCreating = false;
 
   @override
   void initState() {
@@ -33,32 +35,36 @@ class _GroupsDashboardState extends State<GroupsDashboard> {
   }
 
   Future<void> _loadGroups() async {
-    setState(() => _isLoading = true);
-
     try {
+      setState(() => _isLoading = true);
+
       final groups = await PokerService.fetchUserGroups();
+
       setState(() {
-        _allGroups = groups;
+        _groups = groups;
         _isLoading = false;
+        _error = null;
       });
     } catch (e) {
-      setState(() => _isLoading = false);
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error loading groups: $e')),
-        );
-      }
+      debugPrint('Error loading groups: $e');
+      setState(() {
+        _error = e.toString();
+        _isLoading = false;
+        _groups = []; // Ensure empty list on error
+      });
     }
   }
 
   List<Map<String, dynamic>> get _filteredGroups {
     if (_searchQuery.isEmpty) {
-      return _allGroups;
+      return _groups;
     }
-    return _allGroups
-        .where((group) => (group["name"] as String)
-            .toLowerCase()
-            .contains(_searchQuery.toLowerCase()))
+    return _groups
+        .where(
+          (group) => (group["name"] as String).toLowerCase().contains(
+            _searchQuery.toLowerCase(),
+          ),
+        )
         .toList();
   }
 
@@ -84,11 +90,7 @@ class _GroupsDashboardState extends State<GroupsDashboard> {
   }
 
   void _handleGroupTap(Map<String, dynamic> group) {
-    Navigator.pushNamed(
-      context,
-      '/group-detail',
-      arguments: group,
-    );
+    Navigator.pushNamed(context, '/group-detail', arguments: group);
   }
 
   void _handleCreateGroup() {
@@ -99,13 +101,16 @@ class _GroupsDashboardState extends State<GroupsDashboard> {
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
-      builder: (context) =>
-          _buildCreateGroupSheet(nameController, descriptionController),
+      builder:
+          (context) =>
+              _buildCreateGroupSheet(nameController, descriptionController),
     );
   }
 
-  Widget _buildCreateGroupSheet(TextEditingController nameController,
-      TextEditingController descriptionController) {
+  Widget _buildCreateGroupSheet(
+    TextEditingController nameController,
+    TextEditingController descriptionController,
+  ) {
     final theme = Theme.of(context);
 
     return Container(
@@ -130,10 +135,7 @@ class _GroupsDashboardState extends State<GroupsDashboard> {
               ),
             ),
             SizedBox(height: 2.h),
-            Text(
-              'Create New Group',
-              style: theme.textTheme.headlineSmall,
-            ),
+            Text('Create New Group', style: theme.textTheme.headlineSmall),
             SizedBox(height: 3.h),
             TextField(
               controller: nameController,
@@ -169,37 +171,60 @@ class _GroupsDashboardState extends State<GroupsDashboard> {
                   if (nameController.text.trim().isEmpty) {
                     ScaffoldMessenger.of(context).showSnackBar(
                       const SnackBar(
-                          content: Text('Please enter a group name')),
+                        content: Text('Please enter a group name'),
+                      ),
                     );
                     return;
                   }
 
                   try {
-                    await PokerService.createGroup(
+                    setState(() => _isCreating = true);
+
+                    final newGroup = await PokerService.createGroup(
                       name: nameController.text.trim(),
-                      description: descriptionController.text.trim().isEmpty
-                          ? null
-                          : descriptionController.text.trim(),
+                      description:
+                          descriptionController.text.trim().isEmpty
+                              ? null
+                              : descriptionController.text.trim(),
                     );
 
-                    Navigator.pop(context);
-                    await _loadGroups();
+                    if (newGroup != null && mounted) {
+                      Navigator.pop(context);
+                      nameController.clear();
+                      descriptionController.clear();
+                      await _loadGroups();
 
-                    if (mounted) {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(
-                          content: const Text('Group created successfully'),
-                          behavior: SnackBarBehavior.floating,
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(8),
+                      if (mounted) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(
+                            content: Text('Group created successfully!'),
                           ),
+                        );
+                      }
+                    } else if (mounted) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(
+                          content: Text(
+                            'Failed to create group. Please try again.',
+                          ),
+                          backgroundColor: Colors.red,
                         ),
                       );
                     }
                   } catch (e) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(content: Text('Error creating group: $e')),
-                    );
+                    debugPrint('Error creating group: $e');
+                    if (mounted) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(
+                          content: Text('Error: ${e.toString()}'),
+                          backgroundColor: Colors.red,
+                        ),
+                      );
+                    }
+                  } finally {
+                    if (mounted) {
+                      setState(() => _isCreating = false);
+                    }
                   }
                 },
                 child: const Text('Create Group'),
@@ -268,19 +293,20 @@ class _GroupsDashboardState extends State<GroupsDashboard> {
                   color: theme.colorScheme.onSurfaceVariant,
                   size: 24,
                 ),
-                suffixIcon: _searchQuery.isNotEmpty
-                    ? IconButton(
-                        icon: CustomIconWidget(
-                          iconName: 'clear',
-                          color: theme.colorScheme.onSurfaceVariant,
-                          size: 20,
-                        ),
-                        onPressed: () {
-                          _searchController.clear();
-                          _handleSearch('');
-                        },
-                      )
-                    : null,
+                suffixIcon:
+                    _searchQuery.isNotEmpty
+                        ? IconButton(
+                          icon: CustomIconWidget(
+                            iconName: 'clear',
+                            color: theme.colorScheme.onSurfaceVariant,
+                            size: 20,
+                          ),
+                          onPressed: () {
+                            _searchController.clear();
+                            _handleSearch('');
+                          },
+                        )
+                        : null,
                 filled: true,
                 fillColor: theme.colorScheme.surface,
                 border: OutlineInputBorder(
@@ -308,29 +334,28 @@ class _GroupsDashboardState extends State<GroupsDashboard> {
 
           // Groups list
           Expanded(
-            child: _isLoading
-                ? const Center(child: CircularProgressIndicator())
-                : _filteredGroups.isEmpty
-                    ? EmptyStateWidget(
-                        onCreateGroup: _handleCreateGroup,
-                      )
+            child:
+                _isLoading
+                    ? const Center(child: CircularProgressIndicator())
+                    : _filteredGroups.isEmpty
+                    ? EmptyStateWidget(onCreateGroup: _handleCreateGroup)
                     : RefreshIndicator(
-                        onRefresh: _handleRefresh,
-                        child: ListView.builder(
-                          padding: EdgeInsets.symmetric(
-                            horizontal: 4.w,
-                            vertical: 2.h,
-                          ),
-                          itemCount: _filteredGroups.length,
-                          itemBuilder: (context, index) {
-                            final group = _filteredGroups[index];
-                            return GroupCardWidget(
-                              group: group,
-                              onTap: () => _handleGroupTap(group),
-                            );
-                          },
+                      onRefresh: _handleRefresh,
+                      child: ListView.builder(
+                        padding: EdgeInsets.symmetric(
+                          horizontal: 4.w,
+                          vertical: 2.h,
                         ),
+                        itemCount: _filteredGroups.length,
+                        itemBuilder: (context, index) {
+                          final group = _filteredGroups[index];
+                          return GroupCardWidget(
+                            group: group,
+                            onTap: () => _handleGroupTap(group),
+                          );
+                        },
                       ),
+                    ),
           ),
         ],
       ),
