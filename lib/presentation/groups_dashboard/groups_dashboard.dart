@@ -5,6 +5,7 @@ import '../../core/app_export.dart';
 import '../../widgets/custom_app_bar.dart';
 import '../../widgets/custom_bottom_bar.dart';
 import '../../widgets/custom_icon_widget.dart';
+import '../../services/poker_service.dart';
 import './widgets/empty_state_widget.dart';
 import './widgets/group_card_widget.dart';
 
@@ -22,112 +23,33 @@ class _GroupsDashboardState extends State<GroupsDashboard> {
   final TextEditingController _searchController = TextEditingController();
   String _searchQuery = '';
   bool _isRefreshing = false;
+  bool _isLoading = true;
+  List<Map<String, dynamic>> _allGroups = [];
 
-  // Mock data for poker groups
-  final List<Map<String, dynamic>> _allGroups = [
-    {
-      "id": 1,
-      "name": "Friday Night Poker",
-      "memberCount": 8,
-      "memberAvatars": [
-        {
-          "url":
-              "https://img.rocket.new/generatedImages/rocket_gen_img_13a65a919-1763293485191.png",
-          "semanticLabel":
-              "Profile photo of a man with short brown hair wearing a casual shirt"
-        },
-        {
-          "url":
-              "https://img.rocket.new/generatedImages/rocket_gen_img_19df3b9f3-1763299821151.png",
-          "semanticLabel":
-              "Profile photo of a woman with long blonde hair smiling"
-        },
-        {
-          "url":
-              "https://img.rocket.new/generatedImages/rocket_gen_img_13f4b3d4d-1763295780084.png",
-          "semanticLabel": "Profile photo of a man with glasses and dark hair"
-        },
-      ],
-      "nextGame": DateTime.now().add(const Duration(days: 2)),
-      "hasNotification": true,
-      "recentActivity": "New game scheduled",
-      "lastUpdated": DateTime.now().subtract(const Duration(hours: 3)),
-    },
-    {
-      "id": 2,
-      "name": "Weekend Warriors",
-      "memberCount": 12,
-      "memberAvatars": [
-        {
-          "url":
-              "https://images.unsplash.com/photo-1695309972118-9fe68f1728b7",
-          "semanticLabel": "Profile photo of a woman with curly red hair"
-        },
-        {
-          "url":
-              "https://img.rocket.new/generatedImages/rocket_gen_img_1186909d6-1763293633420.png",
-          "semanticLabel": "Profile photo of a man with a beard and cap"
-        },
-        {
-          "url":
-              "https://img.rocket.new/generatedImages/rocket_gen_img_1ee2bcef3-1763301295581.png",
-          "semanticLabel": "Profile photo of a woman with short dark hair"
-        },
-      ],
-      "nextGame": DateTime.now().add(const Duration(days: 5)),
-      "hasNotification": false,
-      "recentActivity": "Payment received",
-      "lastUpdated": DateTime.now().subtract(const Duration(days: 1)),
-    },
-    {
-      "id": 3,
-      "name": "High Rollers Club",
-      "memberCount": 6,
-      "memberAvatars": [
-        {
-          "url":
-              "https://img.rocket.new/generatedImages/rocket_gen_img_1f2746db7-1763296313857.png",
-          "semanticLabel":
-              "Profile photo of a man in a suit with slicked back hair"
-        },
-        {
-          "url":
-              "https://img.rocket.new/generatedImages/rocket_gen_img_176e07230-1763293461602.png",
-          "semanticLabel": "Profile photo of a woman with elegant styling"
-        },
-      ],
-      "nextGame": DateTime.now().add(const Duration(days: 7)),
-      "hasNotification": true,
-      "recentActivity": "Pending invitation",
-      "lastUpdated": DateTime.now().subtract(const Duration(hours: 12)),
-    },
-    {
-      "id": 4,
-      "name": "Casual Tuesday Games",
-      "memberCount": 10,
-      "memberAvatars": [
-        {
-          "url":
-              "https://img.rocket.new/generatedImages/rocket_gen_img_1e6d09531-1763299977907.png",
-          "semanticLabel": "Profile photo of a young man with casual attire"
-        },
-        {
-          "url":
-              "https://img.rocket.new/generatedImages/rocket_gen_img_1b1395d19-1763301528319.png",
-          "semanticLabel": "Profile photo of a woman with glasses"
-        },
-        {
-          "url":
-              "https://img.rocket.new/generatedImages/rocket_gen_img_1fccc499d-1763294878077.png",
-          "semanticLabel": "Profile photo of a man with a friendly smile"
-        },
-      ],
-      "nextGame": DateTime.now().add(const Duration(days: 3)),
-      "hasNotification": false,
-      "recentActivity": "Stats updated",
-      "lastUpdated": DateTime.now().subtract(const Duration(hours: 6)),
-    },
-  ];
+  @override
+  void initState() {
+    super.initState();
+    _loadGroups();
+  }
+
+  Future<void> _loadGroups() async {
+    setState(() => _isLoading = true);
+
+    try {
+      final groups = await PokerService.fetchUserGroups();
+      setState(() {
+        _allGroups = groups;
+        _isLoading = false;
+      });
+    } catch (e) {
+      setState(() => _isLoading = false);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error loading groups: $e')),
+        );
+      }
+    }
+  }
 
   List<Map<String, dynamic>> get _filteredGroups {
     if (_searchQuery.isEmpty) {
@@ -142,10 +64,7 @@ class _GroupsDashboardState extends State<GroupsDashboard> {
 
   Future<void> _handleRefresh() async {
     setState(() => _isRefreshing = true);
-
-    // Simulate network sync with haptic feedback
-    await Future.delayed(const Duration(seconds: 1));
-
+    await _loadGroups();
     setState(() => _isRefreshing = false);
 
     if (mounted) {
@@ -173,15 +92,20 @@ class _GroupsDashboardState extends State<GroupsDashboard> {
   }
 
   void _handleCreateGroup() {
+    final nameController = TextEditingController();
+    final descriptionController = TextEditingController();
+
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
-      builder: (context) => _buildCreateGroupSheet(),
+      builder: (context) =>
+          _buildCreateGroupSheet(nameController, descriptionController),
     );
   }
 
-  Widget _buildCreateGroupSheet() {
+  Widget _buildCreateGroupSheet(TextEditingController nameController,
+      TextEditingController descriptionController) {
     final theme = Theme.of(context);
 
     return Container(
@@ -212,6 +136,7 @@ class _GroupsDashboardState extends State<GroupsDashboard> {
             ),
             SizedBox(height: 3.h),
             TextField(
+              controller: nameController,
               decoration: InputDecoration(
                 labelText: 'Group Name',
                 hintText: 'Enter group name',
@@ -224,6 +149,7 @@ class _GroupsDashboardState extends State<GroupsDashboard> {
             ),
             SizedBox(height: 2.h),
             TextField(
+              controller: descriptionController,
               decoration: InputDecoration(
                 labelText: 'Description (Optional)',
                 hintText: 'Enter group description',
@@ -239,17 +165,42 @@ class _GroupsDashboardState extends State<GroupsDashboard> {
             SizedBox(
               width: double.infinity,
               child: ElevatedButton(
-                onPressed: () {
-                  Navigator.pop(context);
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(
-                      content: const Text('Group created successfully'),
-                      behavior: SnackBarBehavior.floating,
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                    ),
-                  );
+                onPressed: () async {
+                  if (nameController.text.trim().isEmpty) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                          content: Text('Please enter a group name')),
+                    );
+                    return;
+                  }
+
+                  try {
+                    await PokerService.createGroup(
+                      name: nameController.text.trim(),
+                      description: descriptionController.text.trim().isEmpty
+                          ? null
+                          : descriptionController.text.trim(),
+                    );
+
+                    Navigator.pop(context);
+                    await _loadGroups();
+
+                    if (mounted) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(
+                          content: const Text('Group created successfully'),
+                          behavior: SnackBarBehavior.floating,
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                        ),
+                      );
+                    }
+                  } catch (e) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(content: Text('Error creating group: $e')),
+                    );
+                  }
                 },
                 child: const Text('Create Group'),
               ),
@@ -357,27 +308,29 @@ class _GroupsDashboardState extends State<GroupsDashboard> {
 
           // Groups list
           Expanded(
-            child: _filteredGroups.isEmpty
-                ? EmptyStateWidget(
-                    onCreateGroup: _handleCreateGroup,
-                  )
-                : RefreshIndicator(
-                    onRefresh: _handleRefresh,
-                    child: ListView.builder(
-                      padding: EdgeInsets.symmetric(
-                        horizontal: 4.w,
-                        vertical: 2.h,
+            child: _isLoading
+                ? const Center(child: CircularProgressIndicator())
+                : _filteredGroups.isEmpty
+                    ? EmptyStateWidget(
+                        onCreateGroup: _handleCreateGroup,
+                      )
+                    : RefreshIndicator(
+                        onRefresh: _handleRefresh,
+                        child: ListView.builder(
+                          padding: EdgeInsets.symmetric(
+                            horizontal: 4.w,
+                            vertical: 2.h,
+                          ),
+                          itemCount: _filteredGroups.length,
+                          itemBuilder: (context, index) {
+                            final group = _filteredGroups[index];
+                            return GroupCardWidget(
+                              group: group,
+                              onTap: () => _handleGroupTap(group),
+                            );
+                          },
+                        ),
                       ),
-                      itemCount: _filteredGroups.length,
-                      itemBuilder: (context, index) {
-                        final group = _filteredGroups[index];
-                        return GroupCardWidget(
-                          group: group,
-                          onTap: () => _handleGroupTap(group),
-                        );
-                      },
-                    ),
-                  ),
           ),
         ],
       ),

@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../../core/app_export.dart';
 import '../../widgets/custom_app_bar.dart';
 import '../../widgets/custom_icon_widget.dart';
+import '../../services/poker_service.dart';
 import './widgets/advanced_options_section.dart';
 import './widgets/buyin_configuration_section.dart';
 import './widgets/game_basics_section.dart';
@@ -32,78 +33,68 @@ class _CreateGameState extends State<CreateGame> {
   String? _selectedReminderTime;
   bool _isLoading = false;
   bool _hasUnsavedChanges = false;
+  String? _selectedGroupId;
+  List<Map<String, dynamic>> _savedLocations = [];
+  List<Map<String, dynamic>> _groupMembers = [];
+  bool _isLoadingLocations = true;
+  bool _isLoadingMembers = true;
 
-  // Mock data
-  final List<Map<String, dynamic>> _savedLocations = [
-    {
-      'id': 1,
-      'name': 'John\'s House',
-      'address': '123 Poker Street, Las Vegas, NV',
-    },
-    {
-      'id': 2,
-      'name': 'Mike\'s Apartment',
-      'address': '456 Card Avenue, Henderson, NV',
-    },
-    {
-      'id': 3,
-      'name': 'Downtown Casino Club',
-      'address': '789 Strip Boulevard, Las Vegas, NV',
-    },
-  ];
+  @override
+  void initState() {
+    super.initState();
+    _loadInitialData();
+  }
 
-  final List<Map<String, dynamic>> _groupMembers = [
-    {
-      'id': 1,
-      'name': 'John Smith',
-      'avatar':
-          'https://img.rocket.new/generatedImages/rocket_gen_img_13a65a919-1763293485191.png',
-      'semanticLabel':
-          'Profile photo of a man with short brown hair wearing a casual shirt',
-      'isAvailable': true,
-    },
-    {
-      'id': 2,
-      'name': 'Mike Johnson',
-      'avatar':
-          'https://img.rocket.new/generatedImages/rocket_gen_img_1fccc499d-1763294878077.png',
-      'semanticLabel':
-          'Profile photo of a man with glasses and a friendly smile',
-      'isAvailable': true,
-    },
-    {
-      'id': 3,
-      'name': 'Sarah Williams',
-      'avatar':
-          'https://images.unsplash.com/photo-1688125289667-29353c89236b',
-      'semanticLabel': 'Profile photo of a woman with long blonde hair',
-      'isAvailable': false,
-    },
-    {
-      'id': 4,
-      'name': 'David Brown',
-      'avatar':
-          'https://img.rocket.new/generatedImages/rocket_gen_img_1e6d09531-1763299977907.png',
-      'semanticLabel': 'Profile photo of a young man with dark hair',
-      'isAvailable': true,
-    },
-    {
-      'id': 5,
-      'name': 'Emily Davis',
-      'avatar':
-          'https://images.unsplash.com/photo-1597458628079-8fe4814d4010',
-      'semanticLabel': 'Profile photo of a woman with curly brown hair',
-      'isAvailable': true,
-    },
-    {
-      'id': 6,
-      'name': 'Robert Miller',
-      'avatar':
-          'https://img.rocket.new/generatedImages/rocket_gen_img_12355a758-1763292077598.png',
-      'semanticLabel': 'Profile photo of a mature man with gray hair',
-      'isAvailable': false,
-    },
-  ];
+  Future<void> _loadInitialData() async {
+    await _loadLocations();
+    // Get groupId from route arguments if navigated from group detail
+    final args =
+        ModalRoute.of(context)?.settings.arguments as Map<String, dynamic>?;
+    if (args != null && args['groupId'] != null) {
+      _selectedGroupId = args['groupId'] as String;
+      await _loadGroupMembers();
+    }
+  }
+
+  Future<void> _loadLocations() async {
+    setState(() => _isLoadingLocations = true);
+
+    try {
+      final locations = await PokerService.fetchUserLocations();
+      setState(() {
+        _savedLocations = locations;
+        _isLoadingLocations = false;
+      });
+    } catch (e) {
+      setState(() => _isLoadingLocations = false);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error loading locations: $e')),
+        );
+      }
+    }
+  }
+
+  Future<void> _loadGroupMembers() async {
+    if (_selectedGroupId == null) return;
+
+    setState(() => _isLoadingMembers = true);
+
+    try {
+      final members = await PokerService.fetchGroupMembers(_selectedGroupId!);
+      setState(() {
+        _groupMembers = members;
+        _isLoadingMembers = false;
+      });
+    } catch (e) {
+      setState(() => _isLoadingMembers = false);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error loading group members: $e')),
+        );
+      }
+    }
+  }
 
   @override
   void dispose() {
@@ -213,30 +204,64 @@ class _CreateGameState extends State<CreateGame> {
 
     setState(() => _isLoading = true);
 
-    // Simulate API call
-    await Future.delayed(const Duration(seconds: 2));
+    try {
+      final buyinAmount = double.tryParse(_buyinController.text) ?? 0;
+      final rebuyAmount = _allowRebuys && _rebuyAmountController.text.isNotEmpty
+          ? double.tryParse(_rebuyAmountController.text)
+          : null;
 
-    if (!mounted) return;
+      final scheduledDateTime = DateTime(
+        _selectedDate.year,
+        _selectedDate.month,
+        _selectedDate.day,
+        _selectedTime.hour,
+        _selectedTime.minute,
+      );
 
-    setState(() {
-      _isLoading = false;
-      _hasUnsavedChanges = false;
-    });
+      await PokerService.createGame(
+        groupId: _selectedGroupId!,
+        locationId: _selectedLocation!,
+        hostId: _selectedHost!,
+        scheduledAt: scheduledDateTime,
+        buyinAmount: buyinAmount,
+        allowRebuys: _allowRebuys,
+        rebuyAmount: rebuyAmount,
+        selectedPlayerIds: _selectedPlayers.toList(),
+        notes: _notesController.text.trim().isEmpty
+            ? null
+            : _notesController.text.trim(),
+      );
 
-    // Show success dialog
-    await showDialog(
-      context: context,
-      builder: (context) => _SuccessDialog(
-        onViewGame: () {
-          Navigator.pop(context);
-          Navigator.pushReplacementNamed(context, '/game-detail');
-        },
-        onCreateAnother: () {
-          Navigator.pop(context);
-          _resetForm();
-        },
-      ),
-    );
+      if (!mounted) return;
+
+      setState(() {
+        _isLoading = false;
+        _hasUnsavedChanges = false;
+      });
+
+      // Show success dialog
+      await showDialog(
+        context: context,
+        builder: (context) => _SuccessDialog(
+          onViewGame: () {
+            Navigator.pop(context);
+            Navigator.pushReplacementNamed(context, '/game-detail');
+          },
+          onCreateAnother: () {
+            Navigator.pop(context);
+            _resetForm();
+          },
+        ),
+      );
+    } catch (e) {
+      setState(() => _isLoading = false);
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error creating game: $e')),
+        );
+      }
+    }
   }
 
   void _resetForm() {
