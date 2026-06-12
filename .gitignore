@@ -46,3 +46,8 @@ app.*.map.json
 /android/app/profile
 /android/app/release
 android/app/.cxx
+
+# secrets / local env (never commit)
+env.json
+*.env
+.env.local
